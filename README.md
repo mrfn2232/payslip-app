@@ -1,0 +1,15 @@
+# ابزار فیش، قرارداد، لیست پرداخت و ماه جدید
+پیش‌نیاز: `pip install openpyxl playwright && playwright install chromium` — فایل اکسل را قبل از اجرا یک بار در Excel ذخیره کنید.
+1. در شیت «پرسنل» ایمیل و شبا را (بر اساس کد پرسنلی) پر کنید؛ در «تنظیمات» ماه جاری را انتخاب کنید.
+2. فیش و قرارداد همه: `python payslips.py payroll_1405.xlsx --period "آبان ۱۴۰۵" --company "نام شرکت" --rep "نماینده" --contract-start "۱۴۰۵/۰۱/۰۱" --contracts --pdf --out out --contract-register register.csv`
+3. ایمیل: `--email --dry-run` (آزمایشی) سپس بدون dry-run. متغیرها: SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS SMTP_FROM
+4. لیست پرداخت: `--payment-list pay.csv` ؛ ماه دیگر: `--sheet آذر`
+5. ماه جدید از ماه قبل: `python new_month.py payroll_1405.xlsx --from آبان --to آذر` (ورودی‌های متغیر ماهانه صفر می‌شود؛ `--keep-monthly` برای نگه‌داشتن؛ کدهای جدید در شیت پرسنل ثبت می‌شوند)
+
+---
+## برنامه‌ی ویندوز (PayslipMaker.exe)
+- `app.py`: برنامه‌ی پنجره‌ای (انتخاب فایل اکسل، ماه، نام شرکت؛ دکمه‌های فیش، قرارداد، لیست پرداخت). خروجی در پوشه‌ی «خروجی-<ماه>» کنار فایل اکسل ساخته می‌شود.
+- PDF با Edge یا Chrome نصب‌شده ساخته می‌شود؛ نیازی به نصب چیز اضافه نیست.
+- ساخت exe روی ویندوز: پایتون ۳٫۱۰ یا بالاتر را از python.org نصب کنید (گزینه‌ی Add to PATH)، سپس `build_exe.bat` را دوبار کلیک کنید. فایل نهایی: `dist\PayslipMaker.exe`.
+- یا با GitHub: این پوشه را در یک مخزن بگذارید؛ `.github/workflows/build.yml` روی هر push فایل exe را می‌سازد (Actions → Artifacts).
+- ارسال ایمیل در این برنامه نیست؛ برای آن `payslips.py --email` را در خط فرمان استفاده کنید.
