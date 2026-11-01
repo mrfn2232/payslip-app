@@ -36,6 +36,9 @@ for r in rows:
         copied += 1
     if not a.keep_monthly:
         for col in RESET: dst[f'{col}{r}'].value = 0
+        # overtime amount typed as a number (e.g. copied from an official list) -> back to the hours formula
+        if not str(dst[f'Z{r}'].value or '').startswith('='):
+            dst[f'Z{r}'].value = f'=(H{r}*{S}$B$13-I{r})*O{r}/{S}$B$12'
     if r > last_dst:   # ردیف جدید: فرمول‌های مالیات تجمعی
         for col in sorted(SKIP_COLS):
             f = dst[f'{col}{last_dst}'].value
