@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ساخت فیش حقوقی، ایمیل کردن آن و ساخت لیست پرداخت از روی payroll_1405.xlsx
+ساخت فیش حقوقی، قرارداد (چهار نوع)، ایمیل و لیست پرداخت از روی payroll_1405_v4.xlsx
 
 پیش‌نیاز:  pip install openpyxl            (برای PDF:  pip install playwright && playwright install chromium)
 فایل اکسل باید یک‌بار در Excel ذخیره شده باشد تا مقدار فرمول‌ها داخلش باشد.
@@ -19,26 +19,80 @@ import openpyxl
 
 PERSIAN = str.maketrans('0123456789', '۰۱۲۳۴۵۶۷۸۹')
 
-# ستون‌های شیت main (حروف ستون اکسل)
-COL = dict(name='B', family='C', birth_cert='AI', father='AJ', ins_no='AK', job='AL', days='N', daily='P', monthly='Q', housing='S', grocery='T', child='R', benefits='U', insured_total='V', other_nonins='W', mission='Y', car='Z', overtime='AA', gross_legal='AB', insurance='AC', taxable='AD', tax='AE', net_legal='AF', payable='AG', shortfall='AH', contract_total='M', bonus='L', overtime_hours='I', deduct_hours='J', note='H', extra_ins='AS', exempt='AT', loan='AU', other_ded='AV', nonins_tax='W')
+# ستون‌های شیت ماه (نسخه v4 اکسل: E و AG و AH حذف شده‌اند، AP:AV قبل از خالص آمده‌اند)
+COL = dict(name='B', family='C', code='E', agreed_k='F', note='G', overtime_hours='H', deduct_hours='I', bonus='K',
+           contract_total='L', days='M', daily='O', monthly='P', child='Q', housing='R', grocery='S', benefits='T',
+           insured_total='U', nonins_tax='V', mission='X', car='Y', overtime='Z', gross_legal='AA', insurance='AB',
+           taxable='AC', tax='AD', extra_ins='AH', exempt='AI', loan='AJ', other_ded='AK', net_legal='AL',
+           birth_cert='AM', father='AN', ins_no='AO', job='AP', account='AS', target='BG')
+LAYOUT_CHECK = {'AL': 'قابل پرداخت', 'F': 'توافقی', 'V': 'سایر مزایا'}
+DEFAULT_TYPES = {1: ('مهندس ناظر کارگاهی', 0), 2: ('پرسنل فنی — استفاده از مدرک (حق مدرک)', 2),
+                 3: ('پرسنل دفتری', 0), 4: ('مدیران', 0)}
 
 
 def num(v):
     return float(v) if isinstance(v, (int, float)) else 0.0
 
 
+def txt(v):
+    if v is None: return ''
+    if isinstance(v, float) and v.is_integer(): v = int(v)
+    return ' '.join(str(v).split())
+
+
+def load_types(wb):
+    st = wb['تنظیمات']; types = {}
+    for r in range(32, 37):
+        c = st[f'A{r}'].value
+        if isinstance(c, (int, float)):
+            types[int(c)] = (txt(st[f'B{r}'].value), int(num(st[f'C{r}'].value)))
+    return types or dict(DEFAULT_TYPES)
+
+
 def load(path, sheet=None):
+    """همه‌چیز از شیت همان ماه خوانده می‌شود (نه از «لیست پرداخت» که فقط ماه جاری را نشان می‌دهد)."""
     wb = openpyxl.load_workbook(path, data_only=True)
-    sheet = sheet or wb['تنظیمات']['B19'].value          # ماه جاری از شیت تنظیمات
-    main, pl = wb[sheet], wb['لیست پرداخت']                # لیست پرداخت هم‌ردیف با شیت ماه است
+    st = wb['تنظیمات']
+    sheet = sheet or st['B19'].value                       # پیش‌فرض: ماه جاری در تنظیمات
+    if sheet not in wb.sheetnames: raise ValueError(f'شیت «{sheet}» در فایل نیست')
+    main = wb[sheet]
+    bad = [c for c, h in LAYOUT_CHECK.items() if h not in txt(main[f'{c}1'].value)]
+    if bad: raise ValueError('ستون‌های این فایل با نسخه v4 جور نیست (ستون‌های ' + '، '.join(bad) +
+                             '). فایل را با نسخه جدید payroll_1405_v4.xlsx جایگزین کنید.')
+    if main['AL4'].value is None and main['AL5'].value is None:
+        raise ValueError('مقدار فرمول‌ها در فایل نیست؛ فایل را یک بار در Excel باز و ذخیره کنید.')
+    types, min_daily = load_types(wb), num(st['B17'].value)
+    pe, pers = wb['پرسنل'], {}
+    for r in range(4, pe.max_row + 1):
+        k = pe[f'A{r}'].value
+        if k not in (None, ''):
+            pers[txt(k)] = dict(email=txt(pe[f'C{r}'].value), iban=txt(pe[f'D{r}'].value), manual=txt(pe[f'E{r}'].value))
     people = []
     for r in range(4, main.max_row + 1):
-        if pl[f"A{r}"].value in (None, ''):
-            continue
-        p = {k: main[f"{c}{r}"].value for k, c in COL.items()}
-        p.update(row=r, id=pl[f"A{r}"].value, full=str(pl[f"B{r}"].value or '').strip(), type=pl[f"D{r}"].value,
-                 status=pl[f"E{r}"].value, iban=str(pl[f"F{r}"].value or '').strip(), email=str(pl[f"G{r}"].value or '').strip(),
-                 pay=num(pl[f"H{r}"].value), accrued=num(pl[f"I{r}"].value), warn=pl[f"J{r}"].value or '', month=sheet)
+        pid = main[f'A{r}'].value
+        if pid in (None, '') or not (txt(main[f'B{r}'].value) or txt(main[f'C{r}'].value)): continue
+        p = {k: main[f'{c}{r}'].value for k, c in COL.items()}
+        info = pers.get(txt(pid), {})
+        code = int(num(p['code']))
+        title, kind = types.get(code, ('کد ناشناخته', 0))
+        agreed = p['target'] not in (None, '')
+        payable = num(p['target']) if agreed else num(p['net_legal'])
+        status = info.get('manual') or ('حق مدرک' if kind == 2 else 'بدون کارکرد' if num(p['days']) == 0
+                                        else 'پرداخت' if payable > 0.5 else 'صفر - بررسی')
+        iban = info.get('iban') or txt(p['account'])
+        email = info.get('email', '')
+        w = []
+        if code not in types: w.append('کد نوع ناشناخته')
+        if status not in ('قطع همکاری', 'بدون کارکرد') and not email: w.append('ایمیل ندارد')
+        if status == 'پرداخت' and not iban: w.append('شبا ندارد')
+        if status == 'صفر - بررسی': w.append('پرداختنی صفر است')
+        if agreed and payable < num(p['net_legal']) - 0.5: w.append('مبلغ توافقی کمتر از خالص قانونی (توافقی پرداخت می‌شود)')
+        if code == 4 and not agreed: w.append('مبلغ توافقی مدیر وارد نشده')
+        if status not in ('حق مدرک', 'قطع همکاری') and 0 < num(p['daily']) < min_daily: w.append('دستمزد روزانه کمتر از حداقل')
+        p.update(row=r, id=pid, code=code, full=' '.join(f"{txt(p['name'])} {txt(p['family'])}".split()), type=title,
+                 kind=kind, status=status, iban=iban, email=email, payable=payable, agreed=agreed,
+                 pay=payable if status == 'پرداخت' else 0.0, accrued=num(p['net_legal']) if status == 'حق مدرک' else 0.0,
+                 warn='؛ '.join(w), month=sheet)
         people.append(p)
     return people
 
@@ -67,7 +121,7 @@ def build_html(p, period, company, layout, digits):
     other = num(p['gross_legal']) - sum(num(p[k]) for k in ('monthly', 'housing', 'grocery', 'child', 'overtime', 'car', 'nonins_tax', 'extra_ins', 'exempt'))
     rows_e = [('حقوق ماهانه (دستمزد روزانه × روز کارکرد)', p['monthly']), ('حق مسکن', p['housing']), ('بن کارگری', p['grocery']),
               ('حق اولاد', p['child']), ('سایر (حق تاهل، مزایای روزانه، پاداش)', other), ('اضافه‌کاری (پس از کسر کارکرد)', p['overtime']),
-              ('حق خودرو', p['car']), ('سایر مزایای غیرمشمول بیمه', p['nonins_tax']), ('مزایای اضافی مشمول', p['extra_ins']),
+              ('حق خودرو', p['car']), ('سایر مزایا', p['nonins_tax']), ('مزایای اضافی مشمول', p['extra_ins']),
               ('مزایای معاف از بیمه و مالیات', p['exempt'])]
     rows_e = [(k, v) for k, v in rows_e if abs(num(v)) > 0.5]
     rows_d = [('بیمه سهم کارگر', p['insurance']), ('مالیات بر حقوق', p['tax']), ('مساعده / قسط وام', p['loan']), ('سایر کسور', p['other_ded'])]
@@ -89,13 +143,14 @@ def build_html(p, period, company, layout, digits):
         body += f'<table><tr class="tot net"><td>خالص قابل پرداخت (طبق لیست)</td><td class=n>{f(p["net_legal"])}</td></tr></table>'
     if actual:
         body += '<table><tr><th colspan=2>پرداخت</th></tr>'
-        if num(p['contract_total']) > 0:
-            body += f'<tr><td>مبلغ توافقی</td><td class=n>{f(p["contract_total"])}</td></tr>'
-        for k, key, sg in (('اضافه‌کاری', 'overtime', 1), ('حق ماموریت', 'mission', 1), ('مزایای اضافی مشمول', 'extra_ins', 1),
-                           ('سایر مزایای غیرمشمول بیمه', 'nonins_tax', 1), ('مزایای معاف', 'exempt', 1),
-                           ('مساعده / قسط وام (کسر)', 'loan', -1), ('سایر کسور', 'other_ded', -1)):
-            if abs(num(p[key])) > 0.5:
-                body += f'<tr><td>{k}</td><td class=n>{f(sg * num(p[key]))}</td></tr>'
+        if p['agreed']:
+            body += f'<tr><td>مبلغ توافقی (خالص دریافتی)</td><td class=n>{f(p["contract_total"])}</td></tr>'
+            for k, v in (('اضافه‌کاری', num(p['overtime'])), ('حق ماموریت', num(p['mission'])), ('حق خودرو', 0.9 * num(p['car'])),
+                         ('مزایای اضافی مشمول', num(p['extra_ins'])), ('مزایای معاف', num(p['exempt'])),
+                         ('مساعده / قسط وام (کسر)', -num(p['loan'])), ('سایر کسور', -num(p['other_ded']))):
+                if abs(v) > 0.5: body += f'<tr><td>{k}</td><td class=n>{f(v)}</td></tr>'
+        else:
+            body += f'<tr><td>خالص حقوق طبق لیست قانونی</td><td class=n>{f(p["net_legal"])}</td></tr>'
         body += f'<tr class="tot net"><td>مبلغ قابل پرداخت (ریال)</td><td class=n>{f(p["payable"])}</td></tr></table>'
     if deferred:
         body += ('<table><tr><th colspan=2>وضعیت پرداخت</th></tr>'
@@ -113,30 +168,66 @@ def build_html(p, period, company, layout, digits):
 import re
 DATE = re.compile(r'1[34]\d\d/\d{1,2}/\d{1,2}')
 
+# چهار الگوی قرارداد بر اساس کد نوع (ستون E). {job} و {workplace} جایگزین می‌شوند.
+CONTRACTS = {
+    1: dict(title='قرارداد کار — مهندس ناظر کارگاهی',
+            subject='انجام وظایف مهندس ناظر در سمت «{job}» در کارگاه‌های پروژه‌های کارفرما (کارگاه فعلی: {workplace})، شامل نظارت بر اجرای کار '
+                    'مطابق نقشه‌ها و مشخصات فنی، تهیه گزارش روزانه و کمک به تنظیم صورت‌وضعیت‌ها، و کنترل رعایت ضوابط ایمنی و بهداشت کار در کارگاه.',
+            hours='ساعات کار تابع برنامه کارگاه و حداکثر ۴۴ ساعت در هفته است. اضافه‌کاری با توافق و با ضریب ۱٫۴ مزد ساعتی پرداخت می‌شود.',
+            extra=['محل کار و جابه‌جایی: محل کار کارگاه است. کارفرما می‌تواند کارگر را با اطلاع قبلی به کارگاه‌های دیگر خود منتقل کند؛ '
+                   'هزینه ماموریت و ایاب‌وذهاب طبق ضوابط شرکت پرداخت می‌شود.',
+                   'ایمنی: کارگر موظف است دستورالعمل‌های ایمنی کارگاه را رعایت کند و موارد خطر را بی‌درنگ به سرپرست کارگاه گزارش دهد.']),
+    2: dict(title='قرارداد کار — پرسنل فنی (استفاده از مدرک)',
+            subject='همکاری فنی در سمت «{job}» و استفاده کارفرما از مدرک تحصیلی و صلاحیت حرفه‌ای کارگر برای احراز و حفظ صلاحیت و رتبه شرکت '
+                    'نزد مراجع ذی‌ربط؛ و حضور و انجام کار فنی در محل {workplace} هر زمان که کارفرما بخواهد.',
+            hours='ساعات کار طبق برنامه‌ای است که کارفرما ابلاغ می‌کند و حداکثر ۴۴ ساعت در هفته است.',
+            extra=['تعهد مدرک: کارگر متعهد است در مدت این قرارداد مدرک و صلاحیت خود را برای احراز صلاحیت شخص یا شرکت دیگری به کار نگیرد، '
+                   'مدارک لازم را در اختیار کارفرما بگذارد و برای پایان همکاری دست‌کم یک ماه قبل کتباً اطلاع دهد.']),
+    3: dict(title='قرارداد کار — پرسنل دفتری',
+            subject='انجام امور اداری و دفتری در سمت «{job}» در دفتر کارفرما ({workplace}) طبق شرح وظایفی که کارفرما ابلاغ می‌کند.',
+            hours='ساعات کار طبق ساعات اداری شرکت و حداکثر ۴۴ ساعت در هفته است. اضافه‌کاری با توافق و با ضریب ۱٫۴ مزد ساعتی پرداخت می‌شود.',
+            extra=['محرمانگی: کارگر اسناد، اطلاعات مالی و اطلاعات پرسنلی شرکت را محرمانه نگه می‌دارد و بدون اجازه کتبی در اختیار دیگران نمی‌گذارد.']),
+    4: dict(title='قرارداد کار — مدیران',
+            subject='تصدی سمت مدیریتی «{job}» شامل برنامه‌ریزی، هدایت و نظارت بر واحد مربوط و گزارش به مدیرعامل، در حدود اختیاراتی '
+                    'که کتباً ابلاغ می‌شود؛ محل کار: {workplace}.',
+            hours='ساعات کار طبق برنامه شرکت است. کار بیش از ساعات قانونی با توافق طرفین و طبق قانون کار انجام می‌شود.',
+            extra=['محرمانگی و تعارض منافع: کارگر اطلاعات شرکت را محرمانه نگه می‌دارد و در مدت قرارداد بدون اجازه کتبی کارفرما برای شرکت‌های '
+                   'هم‌رشته فعالیت نمی‌کند.',
+                   'تحویل امور: هنگام پایان قرارداد، کارگر اسناد، اموال و امور در جریان را صورت‌جلسه کرده و به جانشین یا کارفرما تحویل می‌دهد.']),
+}
+GENERIC_CONTRACT = dict(title='قرارداد کار', subject='انجام کار در سمت «{job}» در محل: {workplace}.',
+                        hours='حداکثر ۴۴ ساعت در هفته؛ اضافه‌کاری با توافق و با ضریب ۱٫۴ پرداخت می‌شود.', extra=[])
+DEFERRED_CLAUSE = ('نحوه پرداخت (حق مدرک): حقوق و مزایای هر ماه طبق ماده ۵ محاسبه و تعلق می‌گیرد و هر ماه به سازمان تأمین اجتماعی و '
+                   'سازمان امور مالیاتی اعلام می‌شود؛ پرداخت نقدی جمع آن با توافق طرفین در مقاطعی از سال واریز می‌شود.')
+
 
 def build_contract(p, a, digits=True):
     t = lambda x: (str(x).translate(PERSIAN) if digits else str(x))
     m = lambda x: t(f"{num(x):,.0f}")
     e = lambda x: html.escape(str(x if x else '………………'))
+    tpl = CONTRACTS.get(p['code'], GENERIC_CONTRACT)
     d = DATE.search(str(p.get('note') or ''))
     start = d.group(0) if d else a.contract_start
+    fill = lambda s_: html.escape(s_).replace('{job}', e(p['job'])).replace('{workplace}', e(a.workplace))
     rows = [('دستمزد روزانه', p['daily']), ('حق مسکن (ماهانه)', p['housing']), ('بن کارگری (ماهانه)', p['grocery']),
             ('حق اولاد', p['child'])]
-    if num(p['contract_total']) > 0: rows.append(('مبلغ توافقی ماهانه', p['contract_total']))
+    if p['agreed']: rows.append(('مبلغ توافقی ماهانه (خالص دریافتی)', p['contract_total']))
     wage = ''.join(f'<tr><td>{k}</td><td class=n>{m(v)} ریال</td></tr>' for k, v in rows if abs(num(v)) > 0.5)
-    deferred_clause = ('<p><b>ماده ۵-۱ — نحوه پرداخت (حق مدرک):</b> حقوق و مزایای هر ماه طبق ماده ۵ محاسبه و تعلق می‌گیرد و هر ماه به سازمان تأمین اجتماعی و '
-                       'سازمان امور مالیاتی اعلام می‌شود؛ پرداخت نقدی جمع آن (حق مدرک) با توافق طرفین در مقاطعی از سال واریز می‌شود.</p>') if p['status'] == 'حق مدرک' else ''
+    extra = list(tpl['extra']) + ([DEFERRED_CLAUSE] if p['status'] == 'حق مدرک' else [])
+    arts = ''.join(f'<p><b>ماده {t(7 + i)} — {html.escape(x.split(":", 1)[0])}:</b>{html.escape(x.split(":", 1)[1])}</p>'
+                   for i, x in enumerate(extra))
+    last = t(7 + len(extra))
     return f"""<!doctype html><html lang=fa dir=rtl><meta charset=utf-8><title>قرارداد {html.escape(p['full'])}</title><style>{CSS}
 .slip{{width:180mm}}p{{font-size:13px;line-height:2;margin:4px 0}}.sig{{display:flex;justify-content:space-between;margin-top:40px;font-size:13px}}</style>
-<div class=slip><h1>قرارداد کار</h1><div class=sub>{e(a.company)} — پیش‌نویس الگو؛ پیش از امضا توسط مشاور حقوقی بررسی شود</div>
+<div class=slip><h1>{html.escape(tpl['title'])}</h1><div class=sub>{e(a.company)} — پیش‌نویس الگو؛ پیش از امضا توسط مشاور حقوقی بررسی شود</div>
 <p><b>ماده ۱ — طرفین:</b> کارفرما: {e(a.company)} (نماینده: {e(a.rep)}) و کارگر: <b>{html.escape(p['full'])}</b>، نام پدر: {e(p['father'])}،
-شماره شناسنامه: {e(t(p['birth_cert'] or ''))}، شماره بیمه: {e(t(p['ins_no'] or ''))}.</p>
-<p><b>ماده ۲ — موضوع:</b> انجام کار در سمت «{e(p['job'])}» در محل: {e(a.workplace)}.</p>
+شماره شناسنامه: {e(t(txt(p['birth_cert'])))}، شماره بیمه: {e(t(txt(p['ins_no'])))}.</p>
+<p><b>ماده ۲ — موضوع:</b> {fill(tpl['subject'])}</p>
 <p><b>ماده ۳ — مدت:</b> از تاریخ {e(t(start))} به مدت {e(t(a.duration))}.</p>
-<p><b>ماده ۴ — ساعات کار:</b> حداکثر ۴۴ ساعت در هفته؛ اضافه‌کاری با توافق و با ضریب ۱٫۴ پرداخت می‌شود.</p>
+<p><b>ماده ۴ — ساعات کار:</b> {html.escape(tpl['hours'])}</p>
 <p><b>ماده ۵ — حق‌السعی:</b></p><table>{wage}</table>
-{deferred_clause}<p><b>ماده ۶ — بیمه و مالیات:</b> حق بیمه سهم کارگر (۷٪) و مالیات بر حقوق طبق قوانین جاری از مبلغ پرداختی کسر و توسط کارفرما واریز می‌شود.</p>
-<p><b>ماده ۷ — سایر:</b> سایر موارد مطابق قانون کار جمهوری اسلامی ایران است. قرارداد در دو نسخه تنظیم و هر دو نسخه حکم واحد دارد.</p>
+<p><b>ماده ۶ — بیمه و مالیات:</b> حق بیمه سهم کارگر (۷٪) و مالیات بر حقوق طبق قوانین جاری از مبلغ پرداختی کسر و توسط کارفرما واریز می‌شود.</p>
+{arts}<p><b>ماده {last} — سایر:</b> سایر موارد مطابق قانون کار جمهوری اسلامی ایران است. قرارداد در دو نسخه تنظیم و هر دو نسخه حکم واحد دارد.</p>
 <div class=sig><span>کارفرما: {e(a.rep)}<br><br>امضا</span><span>کارگر: {html.escape(p['full'])}<br><br>امضا</span></div></div></html>"""
 
 
@@ -225,7 +316,7 @@ def main():
     ap.add_argument('--pdf', action='store_true'); ap.add_argument('--email', action='store_true')
     ap.add_argument('--dry-run', action='store_true'); ap.add_argument('--english-digits', action='store_true')
     ap.add_argument('--only', help='فقط این ردیف‌ها (شماره ردیف اکسل، با کاما)')
-    ap.add_argument('--contracts', action='store_true', help='قرارداد کار برای پرسنل پرداختی بساز')
+    ap.add_argument('--contracts', action='store_true', help='قرارداد کار (الگوی هر کد نوع) برای همه به‌جز قطع همکاری')
     ap.add_argument('--contract-register', metavar='CSV', help='گزارش وضعیت قرارداد و فیش همه پرسنل')
     ap.add_argument('--rep', default=''); ap.add_argument('--workplace', default=''); ap.add_argument('--duration', default='یک سال')
     ap.add_argument('--contract-start', default='')
@@ -234,9 +325,9 @@ def main():
     people = load(a.xlsx, a.sheet)
     if a.payment_list:
         with open(a.payment_list, 'w', newline='', encoding='utf-8-sig') as fh:
-            w = csv.writer(fh); w.writerow(['ردیف', 'نام', 'شبا/حساب', 'مبلغ (ریال)', 'وضعیت'])
+            w = csv.writer(fh); w.writerow(['ردیف', 'کد', 'نام', 'شبا/حساب', 'مبلغ (ریال)', 'وضعیت'])
             for p in people:
-                if p['status'] == 'پرداخت': w.writerow([p['row'], p['full'], p['iban'], int(round(p['pay'])), p['status']])
+                if p['status'] == 'پرداخت': w.writerow([p['row'], p['id'], p['full'], p['iban'], int(round(p['pay'])), p['status']])
         print('payment list written:', a.payment_list)
         if not a.period: return
     os.makedirs(a.out, exist_ok=True)

@@ -2,7 +2,8 @@
 """
 ساخت ماه جدید از ماه قبل:  python new_month.py payroll_1405.xlsx --from آبان --to آذر [--keep-monthly]
 - همه ستون‌ها (حقوق پایه، افراد جدید، ضرایب و …) از ماه قبل کپی می‌شود.
-- ستون‌های متغیر ماهانه (I ساعت اضافه، J کسر کار، K ماموریت، L پاداش، W و BE و BF مزایا، BG و BH کسور) صفر می‌شوند، مگر با --keep-monthly.
+- ستون‌های متغیر ماهانه (H ساعت اضافه، I کسر کار، J ماموریت، K پاداش، AH و AI مزایا، AJ و AK کسور) صفر می‌شوند، مگر با --keep-monthly.
+- مبلغ توافقی (F) و ستون «سایر مزایا» (V، فرمول) از ماه قبل می‌آیند.
 - فرمول‌های مالیات تجمعی و تعداد روز ماه مقصد دست‌نخورده می‌ماند. اگر ردیف جدیدی در ماه قبل اضافه شده باشد، فرمول‌هایش هم ساخته می‌شود.
 - بعد از اجرا فایل را در Excel باز و ذخیره کنید (تا فرمول‌ها محاسبه شوند) و در شیت تنظیمات «ماه جاری» را عوض کنید.
 """
@@ -11,9 +12,9 @@ import openpyxl
 from openpyxl.formula.translate import Translator
 
 MONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند']
-SKIP_COLS = {'AE', 'AP', 'AQ', 'AR'}      # مخصوص هر ماه
+SKIP_COLS = {'AD', 'AE', 'AF', 'AG', 'BF', 'BH', 'BI'}      # مخصوص هر ماه (مالیات تجمعی؛ اسفند جدول سالانه دارد)
 SKIP_CELLS = {'N1'}
-RESET = ('I', 'J', 'K', 'L', 'W', 'AS', 'AT', 'AU', 'AV')
+RESET = ('H', 'I', 'J', 'K', 'AH', 'AI', 'AJ', 'AK')
 
 ap = argparse.ArgumentParser(); ap.add_argument('xlsx'); ap.add_argument('--from', dest='src', required=True)
 ap.add_argument('--to', dest='dst', required=True); ap.add_argument('--keep-monthly', action='store_true')
@@ -35,8 +36,11 @@ for r in rows:
         copied += 1
     if not a.keep_monthly:
         for col in RESET: dst[f'{col}{r}'].value = 0
+        # overtime amount typed as a number (e.g. copied from an official list) -> back to the hours formula
+        if not str(dst[f'Z{r}'].value or '').startswith('='):
+            dst[f'Z{r}'].value = f'=(H{r}*{S}$B$13-I{r})*O{r}/{S}$B$12'
     if r > last_dst:   # ردیف جدید: فرمول‌های مالیات تجمعی
-        for col in ('AE', 'AP', 'AQ', 'AR'):
+        for col in sorted(SKIP_COLS):
             f = dst[f'{col}{last_dst}'].value
             dst[f'{col}{r}'].value = Translator(f, origin=f'{col}{last_dst}').translate_formula(f'{col}{r}')
             dst[f'{col}{r}']._style = copy.copy(dst[f'{col}{last_dst}']._style)
