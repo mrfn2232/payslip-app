@@ -128,10 +128,10 @@ class App(tk.Tk):
             s, out, a = self.args(); people = P.load(s['file'], s['month'])
             fn = os.path.join(out, 'payment_list.csv')
             with open(fn, 'w', newline='', encoding='utf-8-sig') as fh:
-                w = csv.writer(fh); w.writerow(['ردیف', 'نام', 'شبا/حساب', 'مبلغ (ریال)', 'وضعیت'])
+                w = csv.writer(fh); w.writerow(['ردیف', 'کد', 'نام', 'شبا/حساب', 'مبلغ (ریال)', 'وضعیت'])
                 n = 0
                 for p in people:
-                    if p['status'] == 'پرداخت': w.writerow([p['row'], p['full'], p['iban'], int(round(p['pay'])), p['status']]); n += 1
+                    if p['status'] == 'پرداخت': w.writerow([p['row'], p['id'], p['full'], p['iban'], int(round(p['pay'])), p['status']]); n += 1
             return f'لیست پرداخت ({n} نفر) ساخته شد:\n{fn}'
         self.run(go)
 
