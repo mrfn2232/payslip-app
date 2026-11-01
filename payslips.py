@@ -52,6 +52,7 @@ th,td{border:1px solid #999;padding:4px 7px}th{background:#e8eef7;text-align:rig
 td.n{text-align:left;direction:ltr;font-variant-numeric:tabular-nums}
 .info td{border:none;padding:2px 4px}.tot td{font-weight:bold;background:#f3f3f3}
 .net{font-size:15px;background:#fff6cc!important}.foot{margin-top:14px;font-size:11px;color:#555;display:flex;justify-content:space-between}
+.slip{page-break-after:always;break-after:page}.slip:last-child{page-break-after:auto;break-after:auto}
 @page{size:A4;margin:8mm}
 """
 
@@ -151,17 +152,45 @@ def find_browser():
     return None
 
 
+def edge_pdf(br, html_path, pdf_path, timeout=60):
+    """یک PDF با Edge/Chrome. با پروفایل موقت (تا اگر مرورگر باز است گیر نکند) و دو حالت headless پشت‌سرهم."""
+    import subprocess, tempfile, shutil, time, pathlib
+    uri = pathlib.Path(os.path.abspath(html_path)).as_uri()
+    for mode in ('--headless=new', '--headless'):
+        prof = tempfile.mkdtemp(prefix='ps_')
+        if os.path.exists(pdf_path): os.remove(pdf_path)
+        cmd = [br, mode, '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-sync',
+               '--disable-background-networking', '--disable-component-update', f'--user-data-dir={prof}', '--no-pdf-header-footer',
+               f'--print-to-pdf={os.path.abspath(pdf_path)}', uri]
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        t0 = time.time()
+        try:
+            while time.time() - t0 < timeout:
+                if proc.poll() is not None: break
+                if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+                    time.sleep(0.7); break
+                time.sleep(0.3)
+        finally:
+            if proc.poll() is None: proc.kill()
+            shutil.rmtree(prof, ignore_errors=True)
+        if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0: return True
+    return False
+
+
+def combine(htmls):
+    """چند فایل HTML فیش/قرارداد را در یک سند پشت‌سرهم (هر کدام یک صفحه) ادغام می‌کند."""
+    head = htmls[0][:htmls[0].index('<div class=slip>')]
+    return head + ''.join(h[h.index('<div class=slip>'):h.rindex('</html>')] for h in htmls) + '</html>'
+
+
 def to_pdf(html_files):
-    """PDF: اول Edge/Chrome نصب‌شده روی سیستم (بدون نصب چیز اضافه)؛ اگر نبود playwright."""
-    import subprocess, pathlib
+    """PDF: اول Edge/Chrome نصب‌شده روی سیستم؛ اگر نبود playwright. خروجی: لیست PDFهای ساخته‌شده."""
     br = find_browser()
     out = []
     if br:
         for h in html_files:
             pdf = h[:-5] + '.pdf'
-            subprocess.run([br, '--headless', '--disable-gpu', '--no-pdf-header-footer', f'--print-to-pdf={os.path.abspath(pdf)}',
-                            pathlib.Path(os.path.abspath(h)).as_uri()], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
-            out.append(pdf)
+            if edge_pdf(br, h, pdf): out.append(pdf)
         return out
     from playwright.sync_api import sync_playwright
     with sync_playwright() as pw:

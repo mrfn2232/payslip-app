@@ -29,7 +29,7 @@ def save_settings(d):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('Payslip Maker — فیش‌ساز حقوق'); self.geometry('640x520')
+        self.title('Payslip Maker — فیش‌ساز حقوق'); self.geometry('640x600')
         self.cfg = load_settings(); self.v = {}
         pad = dict(padx=8, pady=4)
         f = ttk.Frame(self); f.pack(fill='both', expand=True, padx=12, pady=10)
@@ -46,7 +46,8 @@ class App(tk.Tk):
             ttk.Label(f, text=lab).grid(row=r, column=0, sticky='w', **pad)
             self.v[k] = tk.StringVar(value=self.cfg.get(k, 'یک سال' if k == 'duration' else ''))
             ttk.Entry(f, textvariable=self.v[k], width=52).grid(row=r + 1, column=0, sticky='we', **pad); r += 2
-        self.pdf = tk.BooleanVar(value=True); ttk.Checkbutton(f, text='Also make PDF (needs Edge or Chrome) / ساخت PDF', variable=self.pdf).grid(row=r, column=0, sticky='w', **pad)
+        self.pdf = tk.BooleanVar(value=True); ttk.Checkbutton(f, text='One combined PDF (fast) / یک PDF برای همه (هر نفر یک صفحه)', variable=self.pdf).grid(row=r, column=0, sticky='w', **pad)
+        self.pdf_each = tk.BooleanVar(value=False); ttk.Checkbutton(f, text='Separate PDF per person (slow, ~3 s each) / PDF جدا برای هر نفر', variable=self.pdf_each).grid(row=r + 1, column=0, sticky='w', **pad); r += 1
         bar = ttk.Frame(f); bar.grid(row=r + 1, column=0, columnspan=2, sticky='w', pady=8)
         for t, c in (('Payslips / فیش‌ها', self.slips), ('Contracts / قراردادها', self.contracts), ('Payment list / لیست پرداخت', self.paylist)):
             ttk.Button(bar, text=t, command=c).pack(side='left', padx=4)
@@ -85,6 +86,21 @@ class App(tk.Tk):
         except Exception as e:
             traceback.print_exc(); self.status.set('Error: ' + str(e)); messagebox.showerror('Error / خطا', str(e))
 
+    def make_pdfs(self, out, files, name):
+        """از روی فایل‌های HTML: یک PDF مشترک و/یا PDF جدا. خروجی: توضیح کوتاه."""
+        if not files or not (self.pdf.get() or self.pdf_each.get()): return ''
+        br = P.find_browser()
+        if not br: return '\nPDF ساخته نشد: Edge یا Chrome پیدا نشد (فایل‌های HTML ساخته شد).'
+        note = ''
+        if self.pdf.get():
+            htmls = [open(f, encoding='utf-8').read() for f in files]
+            allf = os.path.join(out, name + '_all.html'); open(allf, 'w', encoding='utf-8').write(P.combine(htmls))
+            ok = P.edge_pdf(br, allf, allf[:-5] + '.pdf', timeout=90)
+            note += f'\nPDF مشترک: {name}_all.pdf' if ok else '\nPDF مشترک ساخته نشد (فایل HTML آن ساخته شد: آن را در مرورگر باز کنید و Ctrl+P بزنید).'
+        if self.pdf_each.get():
+            done = P.to_pdf(files); note += f'\nPDF جدا: {len(done)} از {len(files)}'
+        return note
+
     def slips(self):
         def go():
             s, out, a = self.args(); people = P.load(s['file'], s['month']); files = []
@@ -92,8 +108,8 @@ class App(tk.Tk):
                 if p['status'] not in ('پرداخت', 'حق مدرک'): continue
                 fn = os.path.join(out, f"slip_{p['row']:03d}.html")
                 open(fn, 'w', encoding='utf-8').write(P.build_html(p, s['period'], s['company'], 'actual', True)); files.append(fn)
-            if self.pdf.get() and files: P.to_pdf(files)
-            return f'{len(files)} فیش ساخته شد در:\n{out}'
+            extra = self.make_pdfs(out, files, 'slips')
+            return f'{len(files)} فیش ساخته شد در:\n{out}' + extra
         self.run(go)
 
     def contracts(self):
@@ -103,8 +119,8 @@ class App(tk.Tk):
                 if p['status'] == 'قطع همکاری': continue
                 fn = os.path.join(out, f"contract_{p['row']:03d}.html")
                 open(fn, 'w', encoding='utf-8').write(P.build_contract(p, a, True)); files.append(fn)
-            if self.pdf.get() and files: P.to_pdf(files)
-            return f'{len(files)} قرارداد ساخته شد در:\n{out}'
+            extra = self.make_pdfs(out, files, 'contracts')
+            return f'{len(files)} قرارداد ساخته شد در:\n{out}' + extra
         self.run(go)
 
     def paylist(self):
